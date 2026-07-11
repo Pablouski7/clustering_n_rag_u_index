@@ -16,8 +16,10 @@ data/raw/          Muestra fuente (stratified_sample_2019_2026.csv, ~9.5k artíc
 data/processed/    Datos derivados (ignorado por git salvo .gitkeep)
 src/
   embeddings/  clustering/  rag/   Módulos del pipeline (por implementar)
+  llm_clients/                     Config + fábricas de clientes vLLM (chat/embeddings)
 scripts/
   check_milvus.py                  Prueba de humo de la base vectorial
+  check_vllm.py                    Prueba de humo de los endpoints vLLM (chat/embeddings)
   sample_stratified_articles.py    Script de referencia que generó la muestra (ver CLAUDE.md)
 docker-compose.yml Milvus standalone (+ etcd, minio, y Attu opcional)
 ```
@@ -62,6 +64,29 @@ python scripts/check_milvus.py  # prueba de conectividad
 - UI opcional (Attu): `docker compose --profile ui up -d` → http://localhost:8000
 - Datos persistidos en `docker/volumes/` (ignorado por git).
 - Parar: `docker compose down` (agregar `-v` para borrar datos).
+
+## LLMs vía vLLM (servidor H200 de la universidad)
+
+La universidad expone modelos vía vLLM con API compatible con OpenAI. Requiere
+**VPN GlobalProtect activa** (sin ella, el tráfico hacia `172.28.230.10` se
+descarta) y usa **HTTP** (no hay TLS configurado).
+
+```bash
+uv sync --extra embeddings-openai   # o: pip install "openai>=1.40" (ver requirements/extras)
+cp .env.example .env                # ajustar VLLM_* si hace falta
+python scripts/check_vllm.py        # prueba de conectividad (chat + embeddings)
+```
+
+- Config y fábricas de clientes: `src/llm_clients/` (`config.py`, `factory.py`).
+- Variables de entorno relevantes (ver `.env.example`): `VLLM_CHAT_BASE_URL`,
+  `VLLM_CHAT_MODEL`, `VLLM_EMBEDDING_BASE_URL`, `VLLM_EMBEDDING_MODEL`,
+  `VLLM_API_KEY`, `VLLM_TIMEOUT`.
+- Los IDs de modelo por defecto (`deepseek-ai/DeepSeek-V4-Flash`, `BAAI/bge-m3`)
+  son los reportados por `GET {base_url}/models`, no los nombres cortos de la
+  documentación original — verificar contra ese endpoint si vLLM cambia de versión.
+- `deepseek-ai/DeepSeek-V4-Flash` es un modelo de razonamiento: consume tokens
+  en el campo `reasoning` antes de emitir `content`, así que `max_tokens` debe
+  ser generoso (ver `scripts/check_vllm.py`).
 
 ## Regenerar la muestra
 
