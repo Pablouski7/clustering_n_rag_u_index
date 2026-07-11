@@ -1,0 +1,44 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+.conda/
+
+# uv
+uv.lock  # descomentar para versionar el lock; por defecto lo ignoramos hasta fijar deps
+
+# === Datos y modelos ===
+# Se versiona data/raw/ (dataset fuente de la tesis). Todo lo derivado se ignora.
+data/processed/*
+!data/processed/.gitkeep
+data/embeddings/
+data/interim/
+models/
+*.npy
+*.npz
+*.parquet
+*.faiss
+
+# === Docker / Milvus ===
+docker/volumes/
+
+# === Notebooks ===
+.ipynb_checkpoints/
+
+# === Secretos y entorno ===
+.env
+.env.local
+*.key
+
+# === IDE / SO ===
+.vscode/
+.idea/
+.DS_Store

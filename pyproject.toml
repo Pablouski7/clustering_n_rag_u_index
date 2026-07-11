@@ -1,0 +1,33 @@
+[project]
+name = "clustering-rag-uindex"
+version = "0.1.0"
+description = "Embeddings, clustering y RAG sobre una muestra de artículos de prensa ecuatoriana (tesis de maestría USFQ)."
+requires-python = ">=3.12"
+readme = "README.md"
+
+# Núcleo mínimo para arrancar y probar la base vectorial.
+# El enfoque de embeddings/RAG está por decidir: se instala vía extras (abajo).
+dependencies = [
+    "pymilvus>=2.5",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "python-dotenv>=1.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Elegir uno de estos caminos cuando se defina la estrategia de embeddings.
+embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2"]
+embeddings-openai = ["openai>=1.40"]
+embeddings-voyage = ["voyageai>=0.2"]
+# Generación para el RAG.
+rag = ["anthropic>=0.40"]
+# Reducción de dimensionalidad y visualización de clusters.
+viz = ["matplotlib>=3.9", "umap-learn>=0.5", "hdbscan>=0.8"]
+# Exploración interactiva.
+notebook = ["jupyterlab>=4.2", "ipykernel>=6.29"]
+
+# uv gestiona un entorno de dependencias sin empaquetar este repo como librería.
+[tool.uv]
+package = false

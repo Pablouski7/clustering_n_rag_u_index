@@ -1,0 +1,12 @@
+# Entorno para conda / micromamba.
+#   Crear entorno dedicado:  micromamba env create -f environment.yml
+#   O instalar en 'base':    micromamba install -n base python=3.12 && pip install -r requirements.txt
+name: clustering-rag-uindex
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  # Las dependencias Python se manejan vía pip para mantener una sola fuente de verdad.
+  - pip:
+      - -r requirements.txt
