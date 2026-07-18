@@ -16,7 +16,7 @@ import sys
 from math import ceil
 from pathlib import Path
 
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import pandas as pd
@@ -152,7 +152,7 @@ def main():
     )
     print("=" * 65)
 
-    output_path = project_root / "data" / "audits" / "stratified_sample_2019_2026.csv"
+    output_path = project_root / "data" / "clustering_samples" / "stratified_sample_2019_2026.csv"
 
     df = load_articles()
     if df.empty:
