@@ -19,8 +19,8 @@ Contenido relevante:
 ## Comandos
 
 ```bash
-# Entorno (esta máquina usa micromamba base; ver README para uv/conda)
-micromamba activate base && pip install -r requirements.txt
+# Entorno (esta máquina usa micromamba ai_env; ver README para uv/conda)
+micromamba activate ai_env && pip install -r requirements.txt
 
 # Base vectorial
 docker compose up -d              # levanta etcd + minio + milvus
