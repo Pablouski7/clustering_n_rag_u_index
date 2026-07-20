@@ -11,7 +11,9 @@ Contenido relevante:
 - `data/raw/stratified_sample_2019_2026.csv` — muestra estratificada de ~9,551 artículos periodísticos (2019–2026), de tres periódicos ecuatorianos: **Diario Expreso**, **El Universo**, **Primicias**. Se versiona en git (es el dataset fuente).
 - `data/processed/`, `data/embeddings/` — datos derivados, ignorados por git.
 - `scripts/sample_stratified_articles.py` — script de referencia que generó el CSV (ver sección abajo; no ejecutable tal cual aquí).
-- `src/embeddings/`, `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar.
+- `src/embeddings/beto.py` — embeddings con **BETO** (`dccuchile/bert-base-spanish-wwm-cased`, 768 dims) en PyTorch: chunking en ventanas solapadas de 512 tokens + mean pooling enmascarado intra-chunk + media inter-chunk. Ver sección "BETO" abajo.
+- `scripts/embed_beto.py` — genera `data/embeddings/beto.npy` sobre la submuestra del EDA.
+- `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar.
 - `src/llm_clients/` — config (`config.py`) y fábricas de clientes (`factory.py`) para los endpoints vLLM (chat/embeddings) del servidor H200 de la universidad, vía SDK `openai` (API compatible con OpenAI). Ver sección "LLMs vía vLLM" abajo.
 - `scripts/check_milvus.py` — prueba de humo de la base vectorial.
 - `scripts/check_vllm.py` — prueba de humo de los endpoints vLLM (chat y embeddings).
@@ -32,6 +34,22 @@ docker compose down               # parar (agregar -v para borrar datos)
 # LLMs vía vLLM (requiere VPN GlobalProtect activa, ver README)
 pip install "openai>=1.40"        # extra embeddings-openai en pyproject.toml
 python scripts/check_vllm.py      # prueba de conectividad (chat + embeddings)
+```
+
+## BETO (chunking + pooling)
+
+`src/embeddings/beto.py` implementa embeddings de artículo completo con BETO pese a su ventana de 512 tokens: el texto se parte en ventanas solapadas (`stride_ratio=0.2`), cada chunk se resume con mean pooling enmascarado sobre la última capa, y los vectores de chunk se promedian.
+
+**El pooling inter-chunk fue attention pooling y se simplificó a media tras medirlo.** Una atención sin parámetros (query = centroide de los chunks) resultó indistinguible de la media en este corpus: coseno 0.9999 entre ambos embeddings, r = 0.9988 entre matrices de distancia. La causa es que los artículos de prensa apenas exceden la ventana: **mediana de 1 chunk, 65% de artículos en un solo chunk**. No re-introducir attention pooling aquí sin volver a medir la distribución de chunks; si el corpus cambia a documentos largos, la decisión puede invertirse.
+
+Corre en CPU (`torch` CPU-only en `ai_env`). Los chunks de todos los artículos se aplanan en un solo stream de batches (`batch_chunks`) porque la mayoría de artículos aporta solo 1-3 chunks.
+
+Advertencia al interpretar resultados: BETO no tiene fine-tuning contrastivo de similitud (a diferencia de MiniLM y BGE-M3), y su espacio es anisotrópico — las cosenos entre documentos arbitrarios rondan 0.94, lo que comprime las distancias y tiende a penalizar el silhouette. Antes de concluir que el chunking o el pooling fallan, revisar la versión con whitening.
+
+`hc_clustering.ipynb` incluye una función `whitening()` (centrado + `Σ^(-1/2)` truncada a 128 componentes, estilo Su et al. 2021) y evalúa "BETO (whitened)" como técnica aparte para que la comparación quede medida. La truncación a 128 no es cosmética: con ~1,512 documentos y 768 dims hay menos muestras que parámetros de covarianza, así que estimar `Σ` completa es ruidoso. Validado sobre BGE-M3: coseno medio entre documentos 0.340 → -0.001.
+
+```bash
+micromamba activate ai_env && python scripts/embed_beto.py   # ~10 min en CPU, cachea data/embeddings/beto.npy
 ```
 
 ## LLMs vía vLLM (servidor H200)
