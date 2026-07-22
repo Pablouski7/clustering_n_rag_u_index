@@ -1,0 +1,10 @@
+# El contexto de build solo necesita código y dependencias: `data/` se monta como
+# volumen y `docker/volumes/` son datos de Milvus (~150 MB), no fuente.
+.git
+.venv
+data
+docker/volumes
+notebooks
+**/__pycache__
+*.pyc
+.env

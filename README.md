@@ -21,7 +21,9 @@ scripts/
   check_milvus.py                  Prueba de humo de la base vectorial
   check_vllm.py                    Prueba de humo de los endpoints vLLM (chat/embeddings)
   sample_stratified_articles.py    Script de referencia que generó la muestra (ver CLAUDE.md)
-docker-compose.yml Milvus standalone (+ etcd, minio, y Attu opcional)
+docker-compose.yml Milvus standalone (+ etcd, minio, Attu opcional, y el job de embeddings)
+docker-compose.gpu.yml  Override que reserva GPU para el job de embeddings
+docker/Dockerfile.embeddings  Imagen (PyTorch+CUDA) para calcular embeddings
 ```
 
 ## Entorno Python
@@ -64,6 +66,35 @@ python scripts/check_milvus.py  # prueba de conectividad
 - UI opcional (Attu): `docker compose --profile ui up -d` → http://localhost:8000
 - Datos persistidos en `docker/volumes/` (ignorado por git).
 - Parar: `docker compose down` (agregar `-v` para borrar datos).
+
+## Calcular embeddings con Docker (portable a otra máquina)
+
+Los embeddings neuronales se calculan en un contenedor propio para poder llevarlos a un
+host con GPU. **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, ~1.7 B parámetros)
+tarda **horas en CPU** y minutos en GPU, así que este es el camino recomendado.
+
+```bash
+# En un host con GPU NVIDIA (requiere nvidia-container-toolkit):
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  --profile embeddings run --rm embeddings
+
+# En un host sin GPU (mismo comando, sin el override; será lento):
+docker compose --profile embeddings run --rm embeddings
+
+# Otro script dentro de la misma imagen:
+docker compose --profile embeddings run --rm embeddings python scripts/embed_beto.py
+```
+
+- El servicio está bajo el perfil `embeddings`, así que **no** arranca con `docker compose up`.
+- `./data` se monta en el contenedor: los `.npy` se escriben directo en `data/embeddings/`
+  del host, listos para los notebooks.
+- Los pesos del modelo (~3.4 GB) quedan en el volumen `hf-cache` y no se re-descargan.
+- `scripts/embed_nemotron.py` guarda avance cada 50 artículos en `nemotron_parcial.npy`:
+  si el contenedor muere, la siguiente corrida retoma donde quedó.
+
+Requisitos de la máquina destino: ~10 GB de disco para la imagen y los pesos. Si solo
+copias el repo (sin `data/`), regenera primero la submuestra y los embeddings base — los
+scripts verifican los `id_articulo` contra `data/embeddings/muestra_ids.npy`.
 
 ## LLMs vía vLLM (servidor H200 de la universidad)
 

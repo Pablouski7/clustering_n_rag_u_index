@@ -13,6 +13,8 @@ Contenido relevante:
 - `scripts/sample_stratified_articles.py` — script de referencia que generó el CSV (ver sección abajo; no ejecutable tal cual aquí).
 - `src/embeddings/beto.py` — embeddings con **BETO** (`dccuchile/bert-base-spanish-wwm-cased`, 768 dims) en PyTorch: chunking en ventanas solapadas de 512 tokens + mean pooling enmascarado intra-chunk + media inter-chunk. Ver sección "BETO" abajo.
 - `scripts/embed_beto.py` — genera `data/embeddings/beto.npy` sobre la submuestra del EDA.
+- `src/embeddings/nemotron.py` — embeddings con **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, 2048 dims) en modo solo texto. Ver sección "Nemotron VL" abajo.
+- `scripts/embed_nemotron.py` — genera `data/embeddings/nemotron.npy` (con reanudación por bloques).
 - `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar.
 - `src/llm_clients/` — config (`config.py`) y fábricas de clientes (`factory.py`) para los endpoints vLLM (chat/embeddings) del servidor H200 de la universidad, vía SDK `openai` (API compatible con OpenAI). Ver sección "LLMs vía vLLM" abajo.
 - `scripts/check_milvus.py` — prueba de humo de la base vectorial.
@@ -27,6 +29,7 @@ micromamba activate ai_env && pip install -r requirements.txt
 # Base vectorial
 docker compose up -d              # levanta etcd + minio + milvus
 docker compose --profile ui up -d # además Attu (UI en http://localhost:8000)
+docker compose --profile embeddings run --rm embeddings   # job de embeddings (ver abajo)
 docker compose ps                 # verificar que 'milvus' esté (healthy)
 python scripts/check_milvus.py    # prueba de conectividad
 docker compose down               # parar (agregar -v para borrar datos)
@@ -51,6 +54,34 @@ Advertencia al interpretar resultados: BETO no tiene fine-tuning contrastivo de 
 ```bash
 micromamba activate ai_env && python scripts/embed_beto.py   # ~10 min en CPU, cachea data/embeddings/beto.npy
 ```
+
+## Nemotron VL (solo texto, sin chunking)
+
+`src/embeddings/nemotron.py` usa `nvidia/llama-nemotron-embed-vl-1b-v2` (Eagle VLM: Llama 3.2 1B + SigLip2 400M, ~1.7 B parámetros, 2048 dims) por su rama de **texto** (`encode_document`) — el corpus no tiene imágenes de página, así que la rama de visión se carga pero nunca se ejecuta.
+
+**No hay chunking, a diferencia de BETO, y es deliberado.** La ventana evaluada del modelo es de 10,240 tokens y el artículo más largo del corpus mide ~24k caracteres ≈ 6,900 tokens, así que **cada artículo entra completo en un solo forward pass** (verificado sobre el CSV, 0 artículos exceden la ventana). Eso lo convierte en la única técnica que ve el texto íntegro sin truncar (TF-IDF/MiniLM/BGE-M3 cortan a 2,000 caracteres) ni promediar chunks (BETO). No añadir chunking aquí sin volver a medir la distribución de longitudes.
+
+Su valor analítico en la comparación es **separar cobertura de artefacto de pooling**: si en la sección de η² de `hc_clustering.ipynb` BETO sale alto y Nemotron VL bajo, el sesgo de longitud lo produce el promediado de chunks y no el hecho de leer el artículo completo.
+
+Advertencias al interpretar resultados: (1) fue entrenado con objetivo contrastivo para *retrieval* consulta→página, no para similitud documento–documento, que es lo que pide el clustering; (2) sus 2048 dims son las más altas de la comparación, y sobre ~1,512 documentos eso tensiona las distancias de Ward y t-SNE.
+
+**Costo.** Es de lejos el método más caro: en CPU tarda **horas** (frente a ~10 min de BETO). Se carga en `bfloat16` (~3.4 GB de pesos en vez de ~6.8) y los textos se ordenan por longitud para que el padding por lote no desperdicie cómputo. `scripts/embed_nemotron.py` persiste el avance en `nemotron_parcial.npy` cada 50 artículos para poder reanudar; al terminar lo borra y guarda `nemotron.npy`.
+
+```bash
+micromamba activate ai_env && python scripts/embed_nemotron.py   # horas en CPU, reanudable
+
+# Recomendado: contenedor con GPU (ver docker/Dockerfile.embeddings)
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  --profile embeddings run --rm embeddings
+```
+
+**Esta máquina no puede correrlo tal cual**: `ai_env` tiene torch CPU-only, el disco está al
+95% (~12 GB libres frente a ~9 GB de imagen + 3.4 GB de pesos) y quedan ~3 GB de RAM. Por eso
+el job vive en Docker, pensado para ejecutarse en otro host. `data/embeddings/nemotron.npy`
+**aún no existe**: las celdas que lo cargan en los tres notebooks fallarán con un
+`FileNotFoundError` explícito hasta que se genere.
+
+Requiere `transformers>=4.56` y `trust_remote_code=True` (el modelo trae código propio). Se fuerza `attn_implementation="sdpa"`: flash-attention no compila para CPU.
 
 ## LLMs vía vLLM (servidor H200)
 

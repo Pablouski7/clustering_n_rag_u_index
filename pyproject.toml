@@ -18,7 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Elegir uno de estos caminos cuando se defina la estrategia de embeddings.
-embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2", "transformers>=4.40"]
+# transformers>=4.56 lo exige llama-nemotron-embed-vl-1b-v2 (código remoto del modelo).
+embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2", "transformers>=4.56"]
 embeddings-openai = ["openai>=1.40"]
 embeddings-voyage = ["voyageai>=0.2"]
 # Generación para el RAG.
