@@ -16,22 +16,8 @@ env/
 uv.lock  # descomentar para versionar el lock; por defecto lo ignoramos hasta fijar deps
 
 # === Datos y modelos ===
-# Se versiona data/raw/stratified_sample_2019_2026.csv (dataset fuente de la tesis).
-# Todo lo derivado se ignora, incluidas las muestras de scripts/sampling_for_clustering/
-# (regenerables desde la BD; destino documentado data/clustering_samples/, no data/raw/).
-data/processed/*
-!data/processed/.gitkeep
-data/embeddings/
-data/interim/
-data/clustering_samples/
-data/raw/stratified_by_seccion_all.csv
-data/raw/stratified_by_seccion_thematic.csv
-data/raw/stratified_grid_2019_2026.csv
+# Se versiona toda la carpeta data/ (dataset fuente + derivados).
 models/
-*.npy
-*.npz
-*.parquet
-*.faiss
 
 # === Docker / Milvus ===
 docker/volumes/
