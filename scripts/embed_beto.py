@@ -37,8 +37,8 @@ def norm_text(text: str) -> str:
 
 def reproducir_submuestra() -> pd.DataFrame:
     """Replica la submuestra estratificada (año × periódico) del EDA."""
-    data = pd.read_csv(RAIZ / "data" / "raw" / "stratified_sample_2019_2026.csv")
-    data["anio"] = pd.to_datetime(data["fecha"]).dt.year
+    data = pd.read_csv(RAIZ / "data" / "raw" / "stratified_grid_2019_2026.csv")
+    data["anio"] = pd.to_datetime(data["anio"], format="%Y").dt.year
     estratos = data.groupby(["nombre_periodico", "anio"])
     cuota = ceil(N_MUESTRA / estratos.ngroups)
     return (

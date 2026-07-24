@@ -90,7 +90,9 @@ def embed_articulos(
     """
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     tokenizador = AutoTokenizer.from_pretrained(modelo_nombre)
-    modelo = AutoModel.from_pretrained(modelo_nombre).to(device).eval()
+    # use_safetensors=True: fuerza cargar model.safetensors en vez de pytorch_model.bin;
+    # transformers reciente rechaza torch.load con torch<2.6 (CVE-2025-32434).
+    modelo = AutoModel.from_pretrained(modelo_nombre, use_safetensors=True).to(device).eval()
 
     # Los chunks de todos los artículos se aplanan en una sola lista para que cada
     # forward pass vaya lleno: la mayoría de artículos aporta 1-3 chunks, así que
