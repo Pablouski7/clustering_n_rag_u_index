@@ -9,6 +9,8 @@ Repositorio de tesis de maestría USFQ. Objetivo del proyecto: **embeddings + cl
 Contenido relevante:
 
 - `data/raw/stratified_sample_2019_2026.csv` — muestra estratificada de ~9,551 artículos periodísticos (2019–2026), de tres periódicos ecuatorianos: **Diario Expreso**, **El Universo**, **Primicias**. Se versiona en git (es el dataset fuente).
+- `data/raw/stratified_grid_2019_2026.csv` — muestra grid (año × periódico con tope por celda + secciones aplanadas), ~28,777 artículos. **Es la que usa `notebooks/eda.ipynb`**; incluye la columna `seccion_canonica`. Generada por `scripts/sampling_for_clustering/sample_grid_balanced.py`.
+- `notebooks/eda.ipynb` — pipeline principal, en cinco secciones: **1. EDA** (sobre texto crudo) → **2. Data Wrangling** (normalización, dedupe, sección canónica, descarte de artículos de ≤40 palabras → 26,210 artículos) → **3. Embeddings** (Doc2Vec / BGE-M3 / BETO sobre el corpus limpio, viz 3D PCA + UMAP) → **4. Clustering** (HDBSCAN por método + métricas) → **5. AE/VAE** (exploratorio). Ver sección "Notebook eda.ipynb" abajo.
 - `data/processed/`, `data/embeddings/` — datos derivados, ignorados por git.
 - `scripts/sample_stratified_articles.py` — script de referencia que generó el CSV (ver sección abajo; no ejecutable tal cual aquí).
 - `src/embeddings/beto.py` — embeddings con **BETO** (`dccuchile/bert-base-spanish-wwm-cased`, 768 dims) en PyTorch: chunking en ventanas solapadas de 512 tokens + mean pooling enmascarado intra-chunk + media inter-chunk. Ver sección "BETO" abajo.
@@ -82,6 +84,22 @@ el job vive en Docker, pensado para ejecutarse en otro host. `data/embeddings/ne
 `FileNotFoundError` explícito hasta que se genere.
 
 Requiere `transformers>=4.56` y `trust_remote_code=True` (el modelo trae código propio). Se fuerza `attn_implementation="sdpa"`: flash-attention no compila para CPU.
+
+## Notebook `eda.ipynb`
+
+Corre de principio a fin sobre `stratified_grid_2019_2026.csv`. Se ejecuta en un **servidor con GPU** (las secciones 3 y 4 no son viables en esta máquina). El orden de las secciones es la invariante: el EDA mide sobre texto **crudo** y no modifica `data`; a partir de la sección 2 sí.
+
+**Sección canónica.** `mapear_seccion_canonica` + `_REGLAS` están **copiadas** de `scripts/sampling_for_clustering/sample_balanced_by_seccion.py`, no importadas: ese script depende de `config.get_sqlalchemy_url` y `src.utilities.text_utils`, que no existen aquí. Al cambiar las reglas hay que hacerlo en ambos sitios. Regenerar la canónica sobre la sección normalizada da **0 filas distintas** frente a la columna del CSV (verificado en el notebook); se recalcula para que la lógica sea auditable y el ~7% de `Otros` se pueda afinar sin volver a la BD.
+
+**`seccion_canonica` es label ruidoso, no ground truth**: la asigna el periódico por criterio editorial/maquetación y el mapeo es por substring. Las métricas externas se reportan en dos vistas — 17 clases y solo las 13 temáticas (sin `Portada`/`Opinión`/`Actualidad`/`Otros`, que son formato o residuo). Un ARI bajo es ambiguo por diseño.
+
+**Filtro de longitud:** se descartan artículos de ≤40 palabras (2,566, el 8.9%): teletipos y pies de foto. Corpus resultante **26,210** artículos, con `reset_index(drop=True)` porque la sección 4 indexa por posición.
+
+**Cachés.** `cargar_cache_full`/`guardar_cache_full` validan contra `data["id_articulo"]`, así que cambiar de corpus invalida los `*_full.npy` solo. Los checkpoints `*_full_parcial.npy` (BGE-M3 y BETO) **no guardan ids y no se autoinvalidan**: al cambiar de corpus hay que borrarlos a mano o los vectores quedan desalineados sin error visible.
+
+**t-SNE está excluido a propósito** de la viz: con ~26k documentos son decenas de minutos por método y `sklearn.manifold.TSNE` es CPU puro (la GPU no lo acelera). Si se quiere recuperar, la vía es `cuml.TSNE(method='fft')`, que hasta donde se ha verificado solo implementa `n_components=2`. UMAP sí se ajusta con el corpus completo.
+
+**Métricas de clustering:** el silhouette se calcula sobre el espacio UMAP-10 **y** sobre el embedding original en coseno, porque el primero está inflado por construcción (UMAP separa grupos aunque la separación no exista en el espacio original) y solo el segundo es comparable entre métodos de distinta dimensión. Silhouette y DBCV van sobre submuestra (`N_MUESTRA_METRICA = 8000`): necesitan la matriz de distancias completa, que con 26k puntos son ~5 GB.
 
 ## LLMs vía vLLM (servidor H200)
 
