@@ -4,20 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado del repositorio
 
-Repositorio de tesis de maestría USFQ. Objetivo del proyecto: **embeddings + clustering + RAG** sobre la muestra de artículos de prensa, usando **Milvus** como base vectorial. Está en fase de **setup**: el entorno y la base vectorial quedan listos, pero el pipeline de embeddings/clustering/RAG **aún no está implementado** (el enfoque de embeddings está por decidir).
+Repositorio de tesis de maestría USFQ. Objetivo del proyecto: **embeddings + clustering + RAG** sobre la muestra de artículos de prensa, usando **Milvus** como base vectorial. **Embeddings y clustering están implementados**, íntegramente dentro de `notebooks/pipeline.ipynb`; la fase de **RAG está pendiente** (el entorno y la base vectorial ya están listos).
+
+**Todo el pipeline vive en un solo notebook, y es deliberado.** No hay módulos de embeddings en `src/`: la lógica de cada método (Doc2Vec, BGE-M3, BETO) es una función dentro del notebook, con caché en `data/embeddings/`. `src/` conserva solo `llm_clients/` (que el notebook importa) y los paquetes vacíos `clustering/` y `rag/`. Al agregar un método nuevo, seguir el patrón del notebook — no reintroducir `src/embeddings/`.
 
 Contenido relevante:
 
-- `data/raw/stratified_sample_2019_2026.csv` — muestra estratificada de ~9,551 artículos periodísticos (2019–2026), de tres periódicos ecuatorianos: **Diario Expreso**, **El Universo**, **Primicias**. Se versiona en git (es el dataset fuente).
-- `data/raw/stratified_grid_2019_2026.csv` — muestra grid (año × periódico con tope por celda + secciones aplanadas), ~28,777 artículos. **Es la que usa `notebooks/eda.ipynb`**; incluye la columna `seccion_canonica`. Generada por `scripts/sampling_for_clustering/sample_grid_balanced.py`.
-- `notebooks/eda.ipynb` — pipeline principal, en cinco secciones: **1. EDA** (sobre texto crudo) → **2. Data Wrangling** (normalización, dedupe, sección canónica, descarte de artículos de ≤40 palabras → 26,210 artículos) → **3. Embeddings** (Doc2Vec / BGE-M3 / BETO sobre el corpus limpio, viz 3D PCA + UMAP) → **4. Clustering** (HDBSCAN por método + métricas) → **5. AE/VAE** (exploratorio). Ver sección "Notebook eda.ipynb" abajo.
-- `data/processed/`, `data/embeddings/` — datos derivados, ignorados por git.
-- `scripts/sample_stratified_articles.py` — script de referencia que generó el CSV (ver sección abajo; no ejecutable tal cual aquí).
-- `src/embeddings/beto.py` — embeddings con **BETO** (`dccuchile/bert-base-spanish-wwm-cased`, 768 dims) en PyTorch: chunking en ventanas solapadas de 512 tokens + mean pooling enmascarado intra-chunk + media inter-chunk. Ver sección "BETO" abajo.
-- `scripts/embed_beto.py` — genera `data/embeddings/beto.npy` sobre la submuestra del EDA.
-- `src/embeddings/nemotron.py` — embeddings con **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, 2048 dims) en modo solo texto. Ver sección "Nemotron VL" abajo.
-- `scripts/embed_nemotron.py` — genera `data/embeddings/nemotron.npy` (con reanudación por bloques).
-- `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar.
+- `data/raw/stratified_grid_2019_2026.csv` — muestra grid (año × periódico con tope por celda + secciones aplanadas), ~28,777 artículos. **Es la única que usa el notebook**; incluye la columna `seccion_canonica`. Generada por `scripts/sampling_for_clustering/sample_grid_balanced.py`.
+- `notebooks/pipeline.ipynb` — pipeline principal, en cinco secciones: **1. EDA** (sobre texto crudo) → **2. Data Wrangling** (normalización, dedupe, sección canónica, descarte de artículos de ≤40 palabras → 26,210 artículos) → **3. Embeddings** (Doc2Vec / BGE-M3 / BETO sobre el corpus limpio, viz 3D PCA + UMAP) → **4. Clustering** (HDBSCAN por método + métricas) → **5. AE/VAE** (exploratorio). Ver sección "Notebook pipeline.ipynb" abajo.
+- `data/raw/stratified_sample_2019_2026.csv`, `stratified_by_seccion_all.csv`, `stratified_by_seccion_thematic.csv` — muestras de iteraciones anteriores. **Ya no las usa nada**; se conservan porque regenerarlas exige la BD MySQL de origen. No construir código nuevo sobre ellas.
+- `data/embeddings/` — vectores cacheados por el notebook (`{nombre}_full.npy` + `_ids.npy` + `_meta.json`), versionados con Git LFS. `data/processed/` — datos derivados.
+- `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar (vacíos).
 - `src/llm_clients/` — config (`config.py`) y fábricas de clientes (`factory.py`) para los endpoints vLLM (chat/embeddings) del servidor H200 de la universidad, vía SDK `openai` (API compatible con OpenAI). Ver sección "LLMs vía vLLM" abajo.
 - `scripts/check_milvus.py` — prueba de humo de la base vectorial.
 - `scripts/check_vllm.py` — prueba de humo de los endpoints vLLM (chat y embeddings).
@@ -31,7 +28,6 @@ micromamba activate ai_env && pip install -r requirements.txt
 # Base vectorial
 docker compose up -d              # levanta etcd + minio + milvus
 docker compose --profile ui up -d # además Attu (UI en http://localhost:8000)
-docker compose --profile embeddings run --rm embeddings   # job de embeddings (ver abajo)
 docker compose ps                 # verificar que 'milvus' esté (healthy)
 python scripts/check_milvus.py    # prueba de conectividad
 docker compose down               # parar (agregar -v para borrar datos)
@@ -43,49 +39,23 @@ python scripts/check_vllm.py      # prueba de conectividad (chat + embeddings)
 
 ## BETO (chunking + pooling)
 
-`src/embeddings/beto.py` implementa embeddings de artículo completo con BETO pese a su ventana de 512 tokens: el texto se parte en ventanas solapadas (`stride_ratio=0.2`), cada chunk se resume con mean pooling enmascarado sobre la última capa, y los vectores de chunk se promedian.
+`embed_beto_articulos` (sección 3 del notebook) calcula embeddings de artículo completo con BETO pese a su ventana de 512 tokens: el texto se parte en ventanas solapadas (`stride_ratio=0.2`), cada chunk se resume con mean pooling enmascarado sobre la última capa, y los vectores de chunk se promedian.
 
 **El pooling inter-chunk fue attention pooling y se simplificó a media tras medirlo.** Una atención sin parámetros (query = centroide de los chunks) resultó indistinguible de la media en este corpus: coseno 0.9999 entre ambos embeddings, r = 0.9988 entre matrices de distancia. La causa es que los artículos de prensa apenas exceden la ventana: **mediana de 1 chunk, 65% de artículos en un solo chunk**. No re-introducir attention pooling aquí sin volver a medir la distribución de chunks; si el corpus cambia a documentos largos, la decisión puede invertirse.
 
-Corre en CPU (`torch` CPU-only en `ai_env`). Los chunks de todos los artículos se aplanan en un solo stream de batches (`batch_chunks`) porque la mayoría de artículos aporta solo 1-3 chunks.
+Los chunks de todos los artículos se aplanan en un solo stream de batches (`batch_chunks`) porque la mayoría de artículos aporta solo 1-3 chunks. Se ejecuta en GPU (Colab / servidor de la universidad); en CPU tarda ~10 min sobre la submuestra vieja, mucho más sobre los 26k actuales.
 
-Advertencia al interpretar resultados: BETO no tiene fine-tuning contrastivo de similitud (a diferencia de MiniLM y BGE-M3), y su espacio es anisotrópico — las cosenos entre documentos arbitrarios rondan 0.94, lo que comprime las distancias y tiende a penalizar el silhouette. Antes de concluir que el chunking o el pooling fallan, revisar la versión con whitening.
+Advertencia al interpretar resultados: BETO no tiene fine-tuning contrastivo de similitud (a diferencia de BGE-M3), y su espacio es anisotrópico — las cosenos entre documentos arbitrarios rondan 0.94, lo que comprime las distancias y tiende a penalizar el silhouette. Antes de concluir que el chunking o el pooling fallan, considerar que la causa puede ser la anisotropía.
 
-`hc_clustering.ipynb` incluye una función `whitening()` (centrado + `Σ^(-1/2)` truncada a 128 componentes, estilo Su et al. 2021) y evalúa "BETO (whitened)" como técnica aparte para que la comparación quede medida. La truncación a 128 no es cosmética: con ~1,512 documentos y 768 dims hay menos muestras que parámetros de covarianza, así que estimar `Σ` completa es ruidoso. Validado sobre BGE-M3: coseno medio entre documentos 0.340 → -0.001.
+**Whitening quedó fuera del pipeline actual.** Los notebooks anteriores evaluaban "BETO (whitened)" con una función `whitening()` (centrado + `Σ^(-1/2)` truncada a 128 componentes, estilo Su et al. 2021), validada sobre BGE-M3: coseno medio entre documentos 0.340 → -0.001. Esa comparación **no se migró** a `pipeline.ipynb`; si hace falta recuperarla, está en el commit `4022f6d` (`notebooks/hc_clustering.ipynb`). Ojo al reusarla: la truncación a 128 se eligió para ~1,512 documentos, donde había menos muestras que parámetros de covarianza; con 26k el criterio hay que rehacerlo.
 
-```bash
-micromamba activate ai_env && python scripts/embed_beto.py   # ~10 min en CPU, cachea data/embeddings/beto.npy
-```
+## Métodos evaluados y descartados
 
-## Nemotron VL (solo texto, sin chunking)
+El pipeline actual compara **Doc2Vec, BGE-M3 y BETO** con **HDBSCAN**. Iteraciones anteriores (commit `4022f6d`, notebooks `hc_clustering`/`gmm_clustering`/`*_autoencoder`, ya eliminados) también evaluaron **MiniLM**, **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, 2048 dims), **clustering jerárquico Ward** y **GMM**, sobre una submuestra de ~1,512 documentos. Nada de eso está en el repo hoy: al proponer alguno de esos métodos, tratarlo como decisión ya tomada y revisar primero ese commit en vez de reimplementarlo.
 
-`src/embeddings/nemotron.py` usa `nvidia/llama-nemotron-embed-vl-1b-v2` (Eagle VLM: Llama 3.2 1B + SigLip2 400M, ~1.7 B parámetros, 2048 dims) por su rama de **texto** (`encode_document`) — el corpus no tiene imágenes de página, así que la rama de visión se carga pero nunca se ejecuta.
+Queda una **referencia colgada** en la celda 59 del notebook ("la sección de η² mide explícitamente"): ese análisis del sesgo de longitud vivía en `hc_clustering.ipynb` y no se migró.
 
-**No hay chunking, a diferencia de BETO, y es deliberado.** La ventana evaluada del modelo es de 10,240 tokens y el artículo más largo del corpus mide ~24k caracteres ≈ 6,900 tokens, así que **cada artículo entra completo en un solo forward pass** (verificado sobre el CSV, 0 artículos exceden la ventana). Eso lo convierte en la única técnica que ve el texto íntegro sin truncar (TF-IDF/MiniLM/BGE-M3 cortan a 2,000 caracteres) ni promediar chunks (BETO). No añadir chunking aquí sin volver a medir la distribución de longitudes.
-
-Su valor analítico en la comparación es **separar cobertura de artefacto de pooling**: si en la sección de η² de `hc_clustering.ipynb` BETO sale alto y Nemotron VL bajo, el sesgo de longitud lo produce el promediado de chunks y no el hecho de leer el artículo completo.
-
-Advertencias al interpretar resultados: (1) fue entrenado con objetivo contrastivo para *retrieval* consulta→página, no para similitud documento–documento, que es lo que pide el clustering; (2) sus 2048 dims son las más altas de la comparación, y sobre ~1,512 documentos eso tensiona las distancias de Ward y t-SNE.
-
-**Costo.** Es de lejos el método más caro: en CPU tarda **horas** (frente a ~10 min de BETO). Se carga en `bfloat16` (~3.4 GB de pesos en vez de ~6.8) y los textos se ordenan por longitud para que el padding por lote no desperdicie cómputo. `scripts/embed_nemotron.py` persiste el avance en `nemotron_parcial.npy` cada 50 artículos para poder reanudar; al terminar lo borra y guarda `nemotron.npy`.
-
-```bash
-micromamba activate ai_env && python scripts/embed_nemotron.py   # horas en CPU, reanudable
-
-# Recomendado: contenedor con GPU (ver docker/Dockerfile.embeddings)
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
-  --profile embeddings run --rm embeddings
-```
-
-**Esta máquina no puede correrlo tal cual**: `ai_env` tiene torch CPU-only, el disco está al
-95% (~12 GB libres frente a ~9 GB de imagen + 3.4 GB de pesos) y quedan ~3 GB de RAM. Por eso
-el job vive en Docker, pensado para ejecutarse en otro host. `data/embeddings/nemotron.npy`
-**aún no existe**: las celdas que lo cargan en los tres notebooks fallarán con un
-`FileNotFoundError` explícito hasta que se genere.
-
-Requiere `transformers>=4.56` y `trust_remote_code=True` (el modelo trae código propio). Se fuerza `attn_implementation="sdpa"`: flash-attention no compila para CPU.
-
-## Notebook `eda.ipynb`
+## Notebook `pipeline.ipynb`
 
 Corre de principio a fin sobre `stratified_grid_2019_2026.csv`. Se ejecuta en un **servidor con GPU** (las secciones 3 y 4 no son viables en esta máquina). El orden de las secciones es la invariante: el EDA mide sobre texto **crudo** y no modifica `data`; a partir de la sección 2 sí.
 
@@ -144,9 +114,9 @@ Las dependencias tienen como fuente de verdad `pyproject.toml`. Los tres archivo
 
 En esta máquina corre un contenedor `uindex-db` (MySQL 8, puerto 3310) que es muy probablemente la base de datos de origen de los artículos — la fuente de `get_sqlalchemy_url()` en el script de muestreo. El nombre del repo (`clustering_n_rag_u_index`) refuerza esa relación con el proyecto "u-index".
 
-## Punto importante: `scripts/sample_stratified_articles.py` no es ejecutable tal cual
+## Punto importante: los scripts de `scripts/sampling_for_clustering/` no son ejecutables tal cual
 
-El script importa módulos que **no existen en este repositorio**:
+Se conservan como documentación de cómo se generaron los CSV de `data/raw/` (ver el README de esa carpeta para la correspondencia script → CSV). `sample_stratified_articles.py` importa módulos que **no existen en este repositorio**:
 
 ```python
 from config import get_normalized_terms
@@ -162,7 +132,7 @@ También referencia `src/data_processing/data_processor.py` (en el docstring) pa
 
 El script también asume conexión a una base de datos relacional (vía SQLAlchemy) con tablas `articulos`, `fuentes`, `fechas`, `periodicos`, `secciones`, cuya configuración vendría de `get_sqlalchemy_url()`.
 
-## Esquema del CSV (`data/raw/stratified_sample_2019_2026.csv`)
+## Esquema de los CSV de `data/raw/`
 
 Columnas, en este orden:
 
@@ -186,4 +156,4 @@ icor_index, icor_v2_index, icor_v3_1_index
 
 ## Idioma
 
-Los nombres de variables, docstrings, prints y comentarios en el código existente están en español — mantener esa convención al editar `scripts/sample_stratified_articles.py` u otro código de este repo.
+Los nombres de variables, docstrings, prints y comentarios en el código existente están en español — mantener esa convención al editar el notebook o cualquier otro código de este repo.

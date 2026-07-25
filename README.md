@@ -5,25 +5,25 @@ Proyecto de titulación de maestría (USFQ). Objetivo: aplicar **embeddings**,
 (Diario Expreso, El Universo, Primicias; 2019–2026), usando **Milvus** como
 base de datos vectorial.
 
-> Estado: **setup inicial**. El pipeline de embeddings/clustering/RAG aún no
-> está implementado (el enfoque de embeddings está por decidir). Este repo deja
-> listo el entorno y la base vectorial.
+> Estado: **embeddings y clustering implementados** en `notebooks/pipeline.ipynb`
+> (EDA → wrangling → Doc2Vec/BGE-M3/BETO → HDBSCAN → AE/VAE). La fase de **RAG
+> sobre Milvus está pendiente**; el entorno y la base vectorial ya están listos.
 
 ## Estructura
 
 ```
-data/raw/          Muestra fuente (stratified_sample_2019_2026.csv, ~9.5k artículos)
+notebooks/pipeline.ipynb   Pipeline completo, de extremo a extremo (ver CLAUDE.md)
+data/raw/          Muestras del corpus; la vigente es stratified_grid_2019_2026.csv
+data/embeddings/   Vectores cacheados por el notebook (*_full.npy + ids + meta)
 data/processed/    Datos derivados (ignorado por git salvo .gitkeep)
 src/
-  embeddings/  clustering/  rag/   Módulos del pipeline (por implementar)
+  clustering/  rag/                Módulos del pipeline (por implementar)
   llm_clients/                     Config + fábricas de clientes vLLM (chat/embeddings)
 scripts/
   check_milvus.py                  Prueba de humo de la base vectorial
   check_vllm.py                    Prueba de humo de los endpoints vLLM (chat/embeddings)
-  sample_stratified_articles.py    Script de referencia que generó la muestra (ver CLAUDE.md)
-docker-compose.yml Milvus standalone (+ etcd, minio, Attu opcional, y el job de embeddings)
-docker-compose.gpu.yml  Override que reserva GPU para el job de embeddings
-docker/Dockerfile.embeddings  Imagen (PyTorch+CUDA) para calcular embeddings
+  sampling_for_clustering/         Scripts que generaron las muestras (ver CLAUDE.md)
+docker-compose.yml Milvus standalone (+ etcd, minio, Attu opcional)
 ```
 
 ## Entorno Python
@@ -67,34 +67,15 @@ python scripts/check_milvus.py  # prueba de conectividad
 - Datos persistidos en `docker/volumes/` (ignorado por git).
 - Parar: `docker compose down` (agregar `-v` para borrar datos).
 
-## Calcular embeddings con Docker (portable a otra máquina)
+## Calcular embeddings
 
-Los embeddings neuronales se calculan en un contenedor propio para poder llevarlos a un
-host con GPU. **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, ~1.7 B parámetros)
-tarda **horas en CPU** y minutos en GPU, así que este es el camino recomendado.
+Los embeddings se calculan **dentro de `notebooks/pipeline.ipynb`** (sección 3), que corre
+en Colab o en el servidor con GPU de la universidad — BETO y Doc2Vec sobre ~26k artículos no
+son viables en esta máquina. El notebook cachea cada método en `data/embeddings/{nombre}_full.npy`
+junto a sus `_ids.npy` y `_meta.json`, y valida el caché contra los `id_articulo` y una huella
+SHA-256 del corpus, así que una segunda corrida no recalcula nada si el texto no cambió.
 
-```bash
-# En un host con GPU NVIDIA (requiere nvidia-container-toolkit):
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
-  --profile embeddings run --rm embeddings
-
-# En un host sin GPU (mismo comando, sin el override; será lento):
-docker compose --profile embeddings run --rm embeddings
-
-# Otro script dentro de la misma imagen:
-docker compose --profile embeddings run --rm embeddings python scripts/embed_beto.py
-```
-
-- El servicio está bajo el perfil `embeddings`, así que **no** arranca con `docker compose up`.
-- `./data` se monta en el contenedor: los `.npy` se escriben directo en `data/embeddings/`
-  del host, listos para los notebooks.
-- Los pesos del modelo (~3.4 GB) quedan en el volumen `hf-cache` y no se re-descargan.
-- `scripts/embed_nemotron.py` guarda avance cada 50 artículos en `nemotron_parcial.npy`:
-  si el contenedor muere, la siguiente corrida retoma donde quedó.
-
-Requisitos de la máquina destino: ~10 GB de disco para la imagen y los pesos. Si solo
-copias el repo (sin `data/`), regenera primero la submuestra y los embeddings base — los
-scripts verifican los `id_articulo` contra `data/embeddings/muestra_ids.npy`.
+Los `.npy` grandes se versionan con **Git LFS** (ver `.gitattributes`).
 
 ## LLMs vía vLLM (servidor H200 de la universidad)
 
@@ -121,5 +102,6 @@ python scripts/check_vllm.py        # prueba de conectividad (chat + embeddings)
 
 ## Regenerar la muestra
 
-`scripts/sample_stratified_articles.py` depende de módulos de un proyecto de origen
-que no viven en este repo (ver **CLAUDE.md**). No es ejecutable tal cual aquí.
+Los scripts de `scripts/sampling_for_clustering/` dependen de módulos de un proyecto de
+origen que no viven en este repo (ver **CLAUDE.md**). No son ejecutables tal cual aquí; se
+conservan como documentación de cómo se generaron los CSV de `data/raw/`.

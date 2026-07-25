@@ -17,15 +17,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Elegir uno de estos caminos cuando se defina la estrategia de embeddings.
-# transformers>=4.56 lo exige llama-nemotron-embed-vl-1b-v2 (código remoto del modelo).
-embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2", "transformers>=4.56", "gensim>=4.3"]
+# El pipeline (notebooks/pipeline.ipynb) usa embeddings-local (Doc2Vec, BETO) +
+# embeddings-openai (BGE-M3 vía vLLM) + viz + notebook.
+# lightning: entrena el AE/VAE de la sección 5 sobre los embeddings ya calculados.
+embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2", "transformers>=4.56", "gensim>=4.3", "lightning>=2.3"]
 embeddings-openai = ["openai>=1.40"]
 embeddings-voyage = ["voyageai>=0.2"]
 # Generación para el RAG.
 rag = ["anthropic>=0.40"]
 # Reducción de dimensionalidad y visualización de clusters.
-viz = ["matplotlib>=3.9", "umap-learn>=0.5", "hdbscan>=0.8"]
+viz = ["matplotlib>=3.9", "seaborn>=0.13", "umap-learn>=0.5", "hdbscan>=0.8"]
 # Exploración interactiva.
 notebook = ["jupyterlab>=4.2", "ipykernel>=6.29"]
 

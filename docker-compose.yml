@@ -60,22 +60,6 @@ services:
       minio:
         condition: service_healthy
 
-  # Cálculo de embeddings (BETO, Nemotron VL). No arranca con `docker compose up`:
-  # es un trabajo puntual, se lanza con
-  #     docker compose --profile embeddings run --rm embeddings
-  # En un host con GPU, añadir el override: -f docker-compose.yml -f docker-compose.gpu.yml
-  embeddings:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.embeddings
-    image: uindex-embeddings:latest
-    profiles: ["embeddings"]
-    volumes:
-      # Lectura del CSV fuente y escritura de data/embeddings/*.npy en el host.
-      - ./data:/app/data
-      # Los pesos (~3.4 GB) persisten entre ejecuciones en vez de re-descargarse.
-      - hf-cache:/cache/huggingface
-
   # UI opcional para inspeccionar colecciones: http://localhost:8000
   attu:
     image: zilliz/attu:v2.5
@@ -88,7 +72,3 @@ services:
     depends_on:
       milvus:
         condition: service_healthy
-
-volumes:
-  # Caché de modelos de HuggingFace, compartida por todas las corridas de `embeddings`.
-  hf-cache:
