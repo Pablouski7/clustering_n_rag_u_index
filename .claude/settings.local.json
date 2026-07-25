@@ -3,7 +3,22 @@
     "allow": [
       "Bash(python -)",
       "Bash(python -c ' *)",
-      "Bash(cd *)"
+      "Bash(cd *)",
+      "Bash(python3 *)",
+      "Bash(python *)",
+      "Bash(jupyter notebook *)",
+      "Bash(sudo -n tmux ls)",
+      "Bash(sudo -n tmux list-panes -t eda -F '#{window_index}.#{pane_index} cmd=#{pane_current_command} pid=#{pane_pid} cwd=#{pane_current_path}')",
+      "Bash(sudo -n tmux capture-pane -p -t eda)",
+      "Bash(grep -v '^$')",
+      "Bash(cd /)",
+      "Bash(sudo -n /usr/local/bin/jupyter-nbconvert --to notebook --execute --output-dir notebooks --output eda_run.ipynb notebooks/eda.ipynb)",
+      "Bash(timeout 25 sudo -n /usr/local/bin/jupyter-nbconvert --to notebook --execute --ExecutePreprocessor.timeout=-1 --ExecutePreprocessor.kernel_name=python3 --output-dir /home/pherrera/projects/clustering_n_rag_u_index/notebooks --output eda_smoke.ipynb /home/pherrera/projects/clustering_n_rag_u_index/notebooks/eda.ipynb)",
+      "Bash(ps -eo pid,pcpu,pmem,etime,cmd --sort=-pcpu)",
+      "Bash(nvidia-smi --query-compute-apps=pid,used_memory --format=csv)",
+      "Bash(ps -eo pid,pcpu,pmem,rss,etime,cmd --sort=-pcpu)",
+      "Bash(nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv)",
+      "Bash(nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv)"
     ]
   }
 }

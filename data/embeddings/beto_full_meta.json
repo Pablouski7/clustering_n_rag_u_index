@@ -1,0 +1,7 @@
+{
+ "huella": "e1f33e28449572fca3f967f4f7e275bc4220efc74b1ee769b71fb10b58c2e414",
+ "n": 26210,
+ "params": {
+  "modelo": "dccuchile/bert-base-spanish-wwm-cased"
+ }
+}

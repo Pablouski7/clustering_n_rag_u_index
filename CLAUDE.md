@@ -95,11 +95,26 @@ Corre de principio a fin sobre `stratified_grid_2019_2026.csv`. Se ejecuta en un
 
 **Filtro de longitud:** se descartan artículos de ≤40 palabras (2,566, el 8.9%): teletipos y pies de foto. Corpus resultante **26,210** artículos, con `reset_index(drop=True)` porque la sección 4 indexa por posición.
 
-**Cachés.** `cargar_cache_full`/`guardar_cache_full` validan contra `data["id_articulo"]`, así que cambiar de corpus invalida los `*_full.npy` solo. Los checkpoints `*_full_parcial.npy` (BGE-M3 y BETO) **no guardan ids y no se autoinvalidan**: al cambiar de corpus hay que borrarlos a mano o los vectores quedan desalineados sin error visible.
+**Cachés.** `cargar_cache_full`/`guardar_cache_full` validan contra `data["id_articulo"]` **y contra `huella_corpus(params)`**, un SHA-256 del contenido de `textos` más los parámetros del método, persistido en `{nombre}_full_meta.json`. Los ids solos no bastaban: cambiar `norm_text` o la tokenización de un método deja los ids intactos, con lo que el caché se daba por bueno y el notebook seguía con vectores obsoletos sin error visible. Los checkpoints `*_full_parcial.npy` llevan su propio sidecar `*_full_parcial_huella.txt` y se descartan solos si no coincide, así que ya **no** hay que borrarlos a mano.
+
+Un caché generado antes de esta salvaguarda no tiene `_meta.json` y se ignora con un mensaje explícito. Si consta que el texto no cambió, `adoptar_cache_full(nombre, params)` le estampa la huella sin recalcularlo — es la única vía que puede sellar como válidos unos vectores obsoletos, así que usarla solo con esa certeza.
+
+**Tokenización.** `_PATRON_TOKEN` (celda 50, el patrón por defecto de `TfidfVectorizer`) es el tokenizador compartido por Doc2Vec, c-TF-IDF y la coherencia de tópicos. BGE-M3 y BETO **no** lo usan: traen su tokenizador subpalabra y para ellos la puntuación es señal, por eso `norm_text` la conserva. No sustituir esto por `texto.split()`: deja la puntuación pegada al token (`"gobierno,"` ≠ `"gobierno"`), lo que duplica el vocabulario, hace que `min_count=5` descarte ~10% de los tokens de entrenamiento en vez de ~5% —penalizando a Doc2Vec por preprocesamiento— y desalinea el vocabulario entre los términos c-TF-IDF y los conteos con los que se calcula el NPMI.
 
 **t-SNE está excluido a propósito** de la viz: con ~26k documentos son decenas de minutos por método y `sklearn.manifold.TSNE` es CPU puro (la GPU no lo acelera). Si se quiere recuperar, la vía es `cuml.TSNE(method='fft')`, que hasta donde se ha verificado solo implementa `n_components=2`. UMAP sí se ajusta con el corpus completo.
 
 **Métricas de clustering:** el silhouette se calcula sobre el espacio UMAP-10 **y** sobre el embedding original en coseno, porque el primero está inflado por construcción (UMAP separa grupos aunque la separación no exista en el espacio original) y solo el segundo es comparable entre métodos de distinta dimensión. Silhouette y DBCV van sobre submuestra (`N_MUESTRA_METRICA = 8000`): necesitan la matriz de distancias completa, que con 26k puntos son ~5 GB.
+
+Las métricas están **jerarquizadas en cuatro niveles** y el código y los plots respetan esa jerarquía (ver el markdown de la sección 4, que argumenta cada degradación):
+
+- **Nivel 1, deciden:** AMI (vs `seccion` y `seccion_canonica`), DBCV, silhouette coseno, coherencia NPMI.
+- **Nivel 2, contexto obligatorio:** `n_clusters`, `%_ruido`, `conf_media`, `pct_conf_baja`.
+- **Nivel 3, se reportan:** ARI, NMI, V-measure, homogeneidad, completitud, coherencia $C_v$.
+- **Nivel 4, anexo:** Davies-Bouldin, Calinski-Harabasz, silhouette sobre UMAP-10.
+
+**AMI y no NMI/V-measure** porque estas dos no corrigen por azar y crecen con el número de clusters, lo que las hace engañosas en el barrido por cortes del árbol (premiarían siempre la partición más fragmentada). **ARI se conserva pero no decide**: la brecha entre AMI alto y ARI bajo es la evidencia de que el clustering encontró subtemas dentro de las secciones editoriales. **DB y CH al anexo** no por la dimensionalidad (se calculan sobre el UMAP-10, donde la euclídea sí es significativa) sino porque CH crece casi monótonamente con k, DB duplica la información del silhouette en ese mismo espacio, y HDBSCAN produce clusters no convexos. Se eliminó la subdivisión 17 vs 13 clases y la métrica de pureza.
+
+**Toda la sección 4 vive en `analizar_espacio(emb, nombre, data, ...)`**, que corre clustering + barrido + soft clustering + métricas + plots sobre cualquier matriz `[N, D]` y devuelve un dict; `comparar_espacios(resultados)` apila los resúmenes en las tres tablas. La sección 5 la invoca sobre los latentes AE/VAE, que entran en la misma comparación. La coherencia solo se calcula sobre la partición EOM (no en cada nivel del barrido) por costo.
 
 ## LLMs vía vLLM (servidor H200)
 

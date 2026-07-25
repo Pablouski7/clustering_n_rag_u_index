@@ -1,0 +1,17 @@
+{
+ "huella": "d531ffc01d4a1cce0885eaebdda6b9a7f6a6d7d517fb978083614ef9024c187b",
+ "n": 26210,
+ "params": {
+  "tokenizador": "(?u)\\b\\w\\w+\\b",
+  "vector_size": 150,
+  "min_count": 5,
+  "window": 8,
+  "dm": 0,
+  "dbow_words": 1,
+  "epochs": 40,
+  "sample": 0.0001,
+  "negative": 10,
+  "workers": 4,
+  "seed": 42
+ }
+}
