@@ -34,3 +34,7 @@ docker/volumes/
 .vscode/
 .idea/
 .DS_Store
+
+# === Informe del curso (no se versiona) ===
+report/
+Proyecto Final DL.pdf
