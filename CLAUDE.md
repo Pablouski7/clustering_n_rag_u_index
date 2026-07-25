@@ -109,6 +109,8 @@ Los IDs de modelo reales reportados por `GET {base_url}/models` difieren de los 
 
 `deepseek-ai/DeepSeek-V4-Flash` es un modelo de razonamiento: puede consumir el presupuesto de `max_tokens` en el campo `reasoning` antes de emitir `content`, dejando la respuesta vacía si el límite es muy bajo.
 
+**BGE-M3 se usa aquí solo en su modalidad dense.** BGE-M3 soporta nativamente tres salidas (dense, sparse/lexical, multi-vector ColBERT-style), pero este proyecto la consume vía `cliente.embeddings.create(...)` contra `/v1/embeddings` de vLLM, que devuelve únicamente el vector pooled denso (1024 dims) — no expone sparse ni multi-vector. Confirmado contra el OpenAPI spec del servidor: `/v1/embeddings` acepta `EmbeddingCompletionRequest`/`EmbeddingChatRequest` y no tiene campos para esas otras salidas. El servidor sí expone `/pooling` (con `task: token_embed`, lo más cercano a multi-vector) y `/score`/`/rerank`, pero el código del proyecto no los usa. Si en la fase de RAG se quiere retrieval híbrido (denso + sparse), hay que usar `/pooling` con `task=token_embed` o correr BGE-M3 en local con `FlagEmbedding`, porque vLLM no replica el `encode()` nativo de BGE-M3 con sus tres salidas simultáneas.
+
 Configuración vía variables de entorno (ver `.env.example`): `VLLM_CHAT_BASE_URL`, `VLLM_CHAT_MODEL`, `VLLM_EMBEDDING_BASE_URL`, `VLLM_EMBEDDING_MODEL`, `VLLM_API_KEY`, `VLLM_TIMEOUT`.
 
 Para depurar prompts o validar payloads, la documentación institucional recomienda probar primero con `curl` directo (mejor estabilidad reportada que vía SDK) antes de integrar en agentes automáticos.
