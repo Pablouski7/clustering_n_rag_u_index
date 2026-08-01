@@ -20,7 +20,7 @@ dependencies = [
 # El pipeline (notebooks/pipeline.ipynb) usa embeddings-local (Doc2Vec, BETO) +
 # embeddings-openai (BGE-M3 vía vLLM) + viz + notebook.
 # lightning: entrena el AE/VAE de la sección 5 sobre los embeddings ya calculados.
-embeddings-local = ["sentence-transformers>=3.0", "torch>=2.2", "transformers>=4.56", "gensim>=4.3", "lightning>=2.3"]
+embeddings-local = ["sentence-transformers>=3.1", "torch>=2.2", "transformers>=4.56", "gensim>=4.3", "lightning>=2.3"]
 embeddings-openai = ["openai>=1.40"]
 embeddings-voyage = ["voyageai>=0.2"]
 # Generación para el RAG.
