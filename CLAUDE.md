@@ -6,14 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Repositorio de tesis de maestría USFQ. Objetivo del proyecto: **embeddings + clustering + RAG** sobre la muestra de artículos de prensa, usando **Milvus** como base vectorial. **Embeddings y clustering están implementados**, íntegramente dentro de `notebooks/pipeline.ipynb`; la fase de **RAG está pendiente** (el entorno y la base vectorial ya están listos).
 
-**Todo el pipeline vive en un solo notebook, y es deliberado.** No hay módulos de embeddings en `src/`: la lógica de cada método (Doc2Vec, BGE-M3, BETO) es una función dentro del notebook, con caché en `data/embeddings/`. `src/` conserva solo `llm_clients/` (que el notebook importa) y los paquetes vacíos `clustering/` y `rag/`. Al agregar un método nuevo, seguir el patrón del notebook — no reintroducir `src/embeddings/`.
+**Todo el pipeline vive en un solo notebook, y es deliberado.** No hay módulos de embeddings en `src/`: cada modelo es una `EmbeddingSpec` (config inmutable) consumida por `EmbeddingRunner` dentro del notebook, con caché en `data/embeddings/`. `src/` conserva solo `llm_clients/` (que el notebook importa para el backend vLLM) y los paquetes vacíos `clustering/` y `rag/`. Al agregar un modelo nuevo, seguir el patrón del notebook — no reintroducir `src/embeddings/`.
 
 Contenido relevante:
 
 - `data/raw/stratified_grid_2019_2026.csv` — muestra grid (año × periódico con tope por celda + secciones aplanadas), ~28,777 artículos. **Es la única que usa el notebook**; incluye la columna `seccion_canonica`. Generada por `scripts/sampling_for_clustering/sample_grid_balanced.py`.
-- `notebooks/pipeline.ipynb` — pipeline principal, en cinco secciones: **1. EDA** (sobre texto crudo) → **2. Data Wrangling** (normalización, dedupe, sección canónica, descarte de artículos de ≤40 palabras → 26,210 artículos) → **3. Embeddings** (Doc2Vec / BGE-M3 / BETO sobre el corpus limpio, viz 3D PCA + UMAP) → **4. Clustering** (HDBSCAN por método + métricas) → **5. AE/VAE** (exploratorio). Ver sección "Notebook pipeline.ipynb" abajo.
+- `notebooks/pipeline.ipynb` — pipeline principal, en cinco secciones: **1. EDA** (sobre texto crudo) → **2. Data Wrangling** (normalización, dedupe, sección canónica, descarte de artículos de ≤40 palabras → 26,210 artículos) → **3. Embeddings** (BGE-M3 / Jina-v3 / E5-large / Qwen3-Embedding-0.6B / Jina-v2-ES sobre el corpus limpio, viz 3D PCA + UMAP) → **4. Clustering** (HDBSCAN por método + métricas) → **5. AE/VAE** (exploratorio, sobre los cinco). Ver sección "Embeddings (EmbeddingSpec / EmbeddingRunner)" abajo.
 - `data/raw/stratified_sample_2019_2026.csv`, `stratified_by_seccion_all.csv`, `stratified_by_seccion_thematic.csv` — muestras de iteraciones anteriores. **Ya no las usa nada**; se conservan porque regenerarlas exige la BD MySQL de origen. No construir código nuevo sobre ellas.
-- `data/embeddings/` — vectores cacheados por el notebook (`{nombre}_full.npy` + `_ids.npy` + `_meta.json`), versionados con Git LFS. `data/processed/` — datos derivados.
+- `data/embeddings/` — vectores cacheados por el notebook (`{spec.cache_name}_full.npy` + `_ids.npy` + `_meta.json`), versionados con Git LFS. `data/processed/` — datos derivados. **Los archivos actuales (`doc2vec_full*`, `beto_full*`, `bge_m3_full*` con el nombre corto viejo) son de la generación anterior de 3 modelos y no coinciden con los `cache_name` actuales** (`bge_m3_native`, `jina_v3_separation`, `multilingual_e5_large_query`, `qwen3_06b_topic_instruction`/`_no_instruction`, `jina_v2_base_es`); hay que regenerarlos.
 - `src/clustering/`, `src/rag/` — módulos del pipeline, por implementar (vacíos).
 - `src/llm_clients/` — config (`config.py`) y fábricas de clientes (`factory.py`) para los endpoints vLLM (chat/embeddings) del servidor H200 de la universidad, vía SDK `openai` (API compatible con OpenAI). Ver sección "LLMs vía vLLM" abajo.
 - `scripts/check_milvus.py` — prueba de humo de la base vectorial.
@@ -37,23 +37,35 @@ pip install "openai>=1.40"        # extra embeddings-openai en pyproject.toml
 python scripts/check_vllm.py      # prueba de conectividad (chat + embeddings)
 ```
 
-## BETO (chunking + pooling)
+## Embeddings (EmbeddingSpec / EmbeddingRunner)
 
-`embed_beto_articulos` (sección 3 del notebook) calcula embeddings de artículo completo con BETO pese a su ventana de 512 tokens: el texto se parte en ventanas solapadas (`stride_ratio=0.2`), cada chunk se resume con mean pooling enmascarado sobre la última capa, y los vectores de chunk se promedian.
+Sección 3 del notebook. `EmbeddingSpec` (dataclass congelada) es el contrato completo de un método texto→vector — model_id, ventana de contexto, batch size, prefijo/prompt/task, backend — y **forma parte de la huella del caché** vía `spec.cache_params()`. `EmbeddingRunner` (context manager) carga el modelo, corre inferencia, guarda checkpoints reanudables y libera GPU al salir. El chunking y la agregación de chunks son funciones puras (`dividir_ids_con_cobertura`, `agregar_chunks`) compartidas por los cinco modelos.
 
-**El pooling inter-chunk fue attention pooling y se simplificó a media tras medirlo.** Una atención sin parámetros (query = centroide de los chunks) resultó indistinguible de la media en este corpus: coseno 0.9999 entre ambos embeddings, r = 0.9988 entre matrices de distancia. La causa es que los artículos de prensa apenas exceden la ventana: **mediana de 1 chunk, 65% de artículos en un solo chunk**. No re-introducir attention pooling aquí sin volver a medir la distribución de chunks; si el corpus cambia a documentos largos, la decisión puede invertirse.
+`MODELOS_PRINCIPALES` (comparación principal):
 
-Los chunks de todos los artículos se aplanan en un solo stream de batches (`batch_chunks`) porque la mayoría de artículos aporta solo 1-3 chunks. Se ejecuta en GPU (Colab / servidor de la universidad); en CPU tarda ~10 min sobre la submuestra vieja, mucho más sobre los 26k actuales.
+| Modelo | `model_id` | Contexto | Tratamiento | Backend |
+|---|---|---:|---|---|
+| BGE-M3 | `BAAI/bge-m3` | 8192 | dense embedding nativo | `vllm` (servidor H200 remoto) |
+| Jina-v3 | `jinaai/jina-embeddings-v3` | 8192 | `encode(..., task="separation")` | `sentence_transformers` (GPU local) |
+| E5-large | `intfloat/multilingual-e5-large` | 512 | prefijo `"query: "` + chunking | `sentence_transformers` (GPU local) |
+| Qwen3-instruct | `Qwen/Qwen3-Embedding-0.6B` | 32768 | instrucción temática neutral (`QWEN_CLUSTER_PROMPT`), `padding_side="left"` | `sentence_transformers` (GPU local) |
+| Jina-v2-ES | `jinaai/jina-embeddings-v2-base-es` | 8192 | embedding bilingüe es-en, 768 dims | `sentence_transformers` (GPU local) |
 
-Advertencia al interpretar resultados: BETO no tiene fine-tuning contrastivo de similitud (a diferencia de BGE-M3), y su espacio es anisotrópico — las cosenos entre documentos arbitrarios rondan 0.94, lo que comprime las distancias y tiende a penalizar el silhouette. Antes de concluir que el chunking o el pooling fallan, considerar que la causa puede ser la anisotropía.
+`ABLACIONES_EMBEDDING` agrega **Qwen3-no-instruct** (mismo modelo sin el prompt, vía `dataclasses.replace`) como ablación separada — no compite como sexto candidato en la selección del ganador. `MODELOS_AE_VAE = list(MODELOS_PRINCIPALES)`: la sección 5 corre AE/VAE sobre los cinco, no sobre un subconjunto hard-coded.
 
-**Whitening quedó fuera del pipeline actual.** Los notebooks anteriores evaluaban "BETO (whitened)" con una función `whitening()` (centrado + `Σ^(-1/2)` truncada a 128 componentes, estilo Su et al. 2021), validada sobre BGE-M3: coseno medio entre documentos 0.340 → -0.001. Esa comparación **no se migró** a `pipeline.ipynb`; si hace falta recuperarla, está en el commit `4022f6d` (`notebooks/hc_clustering.ipynb`). Ojo al reusarla: la truncación a 128 se eligió para ~1,512 documentos, donde había menos muestras que parámetros de covarianza; con 26k el criterio hay que rehacerlo.
+**Solo BGE-M3 corre remoto** (vía `src/llm_clients.get_embedding_client`, contra el servidor vLLM); los otros cuatro cargan pesos localmente con `SentenceTransformer` y requieren GPU local — de ahí que su huella de caché fije `precision="remote"` para BGE-M3 (no debe cambiar si la máquina local tiene o no GPU) y `"float16"/"float32"` para los demás según `torch.cuda.is_available()`.
+
+**Chunking y agregación son comunes a los cinco.** `dividir_ids_con_cobertura` parte los ids del artículo en ventanas solapadas (`overlap_tokens`, default 64) y devuelve, por chunk, cuántos tokens son *cobertura nueva* — no la longitud total de la ventana — para no pesar doble el overlap ni sobrerrepresentar el último chunk corto. `agregar_chunks` normaliza L2 cada vector de chunk y promedia ponderando por esa cobertura nueva. `_overhead_tokens` descuenta tokens especiales + prefijo/prompt del presupuesto antes de chunkear, con un margen fijo (`TOKEN_BUDGET_MARGIN = 4`) por si decode→retokenize desplaza la frontera.
+
+`validar_embeddings` corta en seco si el shape no es `(n, spec.output_dim)`, si hay NaN/inf, o si las normas no son ≈1 (tolerancia `2e-3`) — así un fallo de pooling no pasa desapercibido como en la generación anterior. Al importar, el notebook aborta si `sentence-transformers < 3.1.0` (requerido por Jina v3) o `transformers < 4.51.0` (requerido por Qwen3 Embedding).
 
 ## Métodos evaluados y descartados
 
-El pipeline actual compara **Doc2Vec, BGE-M3 y BETO** con **HDBSCAN**. Iteraciones anteriores (commit `4022f6d`, notebooks `hc_clustering`/`gmm_clustering`/`*_autoencoder`, ya eliminados) también evaluaron **MiniLM**, **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, 2048 dims), **clustering jerárquico Ward** y **GMM**, sobre una submuestra de ~1,512 documentos. Nada de eso está en el repo hoy: al proponer alguno de esos métodos, tratarlo como decisión ya tomada y revisar primero ese commit en vez de reimplementarlo.
+El pipeline actual compara **BGE-M3, Jina-v3, E5-large, Qwen3-Embedding-0.6B (+ ablación sin instrucción) y Jina-v2-ES** con **HDBSCAN**. Esto **reemplazó** la comparación anterior de **Doc2Vec, BGE-M3 y BETO** (commit `2873018`, "ejecución completa del pipeline con AE/VAE sobre los tres embeddings" — último commit con Doc2Vec/BETO intactos; el pivote a los cinco modelos actuales ocurrió en `711ce4b`). BETO usaba chunking con mean pooling enmascarado y ventana de 512 tokens; el pooling inter-chunk fue attention pooling y se simplificó a media tras medir que ambos daban coseno 0.9999 en este corpus (mediana de 1 chunk por artículo). Si hace falta recuperar Doc2Vec o BETO, están en `2873018`.
 
-Queda una **referencia colgada** en la celda 59 del notebook ("la sección de η² mide explícitamente"): ese análisis del sesgo de longitud vivía en `hc_clustering.ipynb` y no se migró.
+**Whitening tampoco está en el pipeline actual.** Notebooks previos a `2873018` evaluaban "BETO (whitened)" con una función `whitening()` (centrado + `Σ^(-1/2)` truncada a 128 componentes, estilo Su et al. 2021), validada sobre BGE-M3: coseno medio entre documentos 0.340 → -0.001. Esa comparación vive en el commit `4022f6d` (`notebooks/hc_clustering.ipynb`). Ojo al reusarla: la truncación a 128 se eligió para ~1,512 documentos, donde había menos muestras que parámetros de covarianza; con 26k el criterio hay que rehacerlo.
+
+Iteraciones aún más antiguas (mismo commit `4022f6d`, notebooks `hc_clustering`/`gmm_clustering`/`*_autoencoder`, ya eliminados) también evaluaron **MiniLM**, **Nemotron VL** (`nvidia/llama-nemotron-embed-vl-1b-v2`, 2048 dims), **clustering jerárquico Ward** y **GMM**, sobre una submuestra de ~1,512 documentos. Nada de eso está en el repo hoy: al proponer alguno de esos métodos, tratarlo como decisión ya tomada y revisar primero ese commit en vez de reimplementarlo.
 
 ## Notebook `pipeline.ipynb`
 
@@ -69,7 +81,7 @@ Corre de principio a fin sobre `stratified_grid_2019_2026.csv`. Se ejecuta en un
 
 Un caché generado antes de esta salvaguarda no tiene `_meta.json` y se ignora con un mensaje explícito. Si consta que el texto no cambió, `adoptar_cache_full(nombre, params)` le estampa la huella sin recalcularlo — es la única vía que puede sellar como válidos unos vectores obsoletos, así que usarla solo con esa certeza.
 
-**Tokenización.** `_PATRON_TOKEN` (celda 50, el patrón por defecto de `TfidfVectorizer`) es el tokenizador compartido por Doc2Vec, c-TF-IDF y la coherencia de tópicos. BGE-M3 y BETO **no** lo usan: traen su tokenizador subpalabra y para ellos la puntuación es señal, por eso `norm_text` la conserva. No sustituir esto por `texto.split()`: deja la puntuación pegada al token (`"gobierno,"` ≠ `"gobierno"`), lo que duplica el vocabulario, hace que `min_count=5` descarte ~10% de los tokens de entrenamiento en vez de ~5% —penalizando a Doc2Vec por preprocesamiento— y desalinea el vocabulario entre los términos c-TF-IDF y los conteos con los que se calcula el NPMI.
+**Tokenización.** `_PATRON_TOKEN` (el patrón por defecto de `TfidfVectorizer`) es el tokenizador compartido por c-TF-IDF y la coherencia de tópicos (`tokens_coh`) — comparten vocabulario a propósito para que los términos de cada cluster y los conteos con los que se calcula el NPMI estén alineados. Ninguno de los cinco modelos de embedding lo usa: cada uno trae su tokenizador subpalabra propio (vía `AutoTokenizer.from_pretrained(spec.model_id, ...)`), y para ellos la puntuación es señal, por eso `norm_text` la conserva. No sustituir `_PATRON_TOKEN` por `texto.split()`: deja la puntuación pegada al token (`"gobierno,"` ≠ `"gobierno"`), lo que duplica el vocabulario y desalinea los términos c-TF-IDF de los conteos del NPMI.
 
 **t-SNE está excluido a propósito** de la viz: con ~26k documentos son decenas de minutos por método y `sklearn.manifold.TSNE` es CPU puro (la GPU no lo acelera). Si se quiere recuperar, la vía es `cuml.TSNE(method='fft')`, que hasta donde se ha verificado solo implementa `n_components=2`. UMAP sí se ajusta con el corpus completo.
 
